@@ -1,0 +1,6 @@
+openeo
+pyrosm
+matplotlib
+torch
+torchvision
+torchaudio
