@@ -37,8 +37,7 @@ APPLY_LR_DECAY_EPOCH = 30
     "-d",
     "--data_dir",
     type=click.Path(exists=True, file_okay=False, dir_okay=True),
-    default="/storage.spa.siemens.com/dlf.public/rs19_val/",
-    help="Location of the RS19 dataset",
+    help="Location of the dataset",
 )
 @click.option(
     "-v",
@@ -75,6 +74,7 @@ def main(epochs, use_cpu, data_dir, val_split, save_dir):
         return A.Compose(transform)
 
     device = DEVICE_CUDA if not use_cpu else DEVICE_CPU
+    # TODO: change this to match with the satellite image dataset
     images_dir = str(Path(data_dir).joinpath("jpgs", "rs19_val"))
     masks_dir = str(Path(data_dir).joinpath("uint8", "rs19_val"))
     config_json_path = str(Path(data_dir).joinpath("rs19-config.json"))

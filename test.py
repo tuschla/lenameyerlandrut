@@ -97,7 +97,6 @@ def save_segmentation_predictions(
     "--image",
     "image_folder",
     type=click.Path(dir_okay=True),
-    default="/storage.spa.siemens.com/adas_shared/ODAI/baseline_evaluation_CBTD/extracted_data/track_3d_data_2023_12_14-14_55_57/camera_image",
     help="Image file path",
 )
 @click.option(
