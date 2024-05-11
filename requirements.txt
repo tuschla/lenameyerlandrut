@@ -4,4 +4,8 @@ matplotlib
 torch
 torchvision
 torchaudio
-opencv-python
+opencv_python
+git+https://github.com/qubvel/segmentation_models.pytorch
+albumentations
+click
+tensorboardx
