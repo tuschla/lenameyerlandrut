@@ -1,28 +1,6 @@
 import torch, cv2, os
 import numpy as np
 
-def draw_mask(image: np.ndarray, mask: np.ndarray) -> np.ndarray:
-    """Draw bitmask onto image.
-
-    Parameters
-    ----------
-    image : np.ndarray
-        Image with dimensions W, H, C
-    mask : np.ndarray
-        Bitmask with dimensions W, H
-
-    Returns
-    -------
-    np.ndarray
-        Image with overlayed bitmask (W, H, C)
-    """
-    mask = np.repeat(mask[:, :, np.newaxis], 3, axis=2)
-    masked_image = image.copy()
-    masked_image = np.where(
-        mask.astype(int), np.array([0, 0, 255]), masked_image
-    ).astype(np.float32)
-    return cv2.addWeighted(image, 0.3, masked_image, 0.7, 0)
-
 class BuildingSegmentation(torch.utils.data.Dataset):
 
     def __init__(
