@@ -1,4 +1,5 @@
 openeo
+# git+https://github.com/Open-EO/openeo-python-driver.git
 pyrosm
 matplotlib
 torch
@@ -9,3 +10,4 @@ git+https://github.com/qubvel/segmentation_models.pytorch
 albumentations
 click
 tensorboardx
+tqdm
