@@ -1,5 +1,4 @@
 openeo
-# git+https://github.com/Open-EO/openeo-python-driver.git
 pyrosm
 matplotlib
 torch
@@ -11,3 +10,5 @@ albumentations
 click
 tensorboardx
 tqdm
+retry
+rasterio

@@ -1,8 +1,8 @@
 import torch, cv2, os
 import numpy as np
 
-class BuildingSegmentation(torch.utils.data.Dataset):
 
+class BuildingSegmentation(torch.utils.data.Dataset):
     def __init__(
         self,
         images_dir,
@@ -26,7 +26,6 @@ class BuildingSegmentation(torch.utils.data.Dataset):
         self.mask_files = [
             os.path.join(masks_dir, mask_id) for mask_id in self.mask_ids
         ]
-
 
         self.classes = {
             "rail": {"id": 1, "dim": 0, "color": [0, 120, 230]},

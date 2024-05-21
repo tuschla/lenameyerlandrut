@@ -3,6 +3,7 @@ from tqdm import tqdm
 import numpy as np
 import pandas as pd
 from rasterio.features import rasterize
+from retry import retry
 
 
 def draw_mask(image: np.ndarray, mask: np.ndarray) -> np.ndarray:
@@ -29,7 +30,6 @@ def draw_mask(image: np.ndarray, mask: np.ndarray) -> np.ndarray:
 
 
 class Pipeline:
-
     def __init__(
         self,
         sat_backend: str = "https://openeo.dataspace.copernicus.eu/openeo/1.2",
@@ -41,15 +41,15 @@ class Pipeline:
         self.cities = cities
         self.__make_dirs(path)
 
-        with multiprocessing.Pool(processes=4) as pool:
-            results = []
-            for city in tqdm(self.cities, desc="Dispatching"):
-                results.append(pool.apply_async(self.process_city, args=(city, path)))
-            for result in tqdm(results, desc="Processing"):
-                print(result.get())
+        # with multiprocessing.Pool(processes=3) as pool: # openeo max connections is 3 for some reason
+        #     results = []
+        #     for city in tqdm(self.cities, desc="Dispatching"):
+        #         results.append(pool.apply_async(self.process_city, args=(city, path)))
+        #     for result in tqdm(results, desc="Processing"):
+        #         print(result.get())
 
-        # for city in tqdm(cities):
-        #     self.process_city(city, path)
+        for city in tqdm(cities):
+            self.process_city(city, path)
 
     def process_city(self, city: str, path: str):
         fp = pyrosm.get_data(city)
@@ -58,18 +58,18 @@ class Pipeline:
         bbox = list(np.round(bbox, 6))
         print(city, bbox)
         osm = pyrosm.OSM(fp, bbox)
-        bbox = self.__bbox_to_spatial_extent(bbox)
+        spatial_extent = self.__bbox_to_spatial_extent(bbox)
         buildings = osm.get_buildings()
         self.rasterized_buildings = None
 
-        files = self.__save_defined(bbox, f"{path}/{city}/")
+        files = self.__save_defined(spatial_extent, f"{path}/{city}/")
 
         for file in files:
             rgb = self.__nc_to_rgb(file)
             if self.rasterized_buildings is None:
                 raster_height, raster_width, _ = rgb.shape
                 self.rasterized_buildings = self.__rasterize_buildings(
-                    buildings, raster_height, raster_width
+                    buildings, bbox, raster_height, raster_width
                 )
 
             cv2.imwrite(
@@ -145,10 +145,11 @@ class Pipeline:
     def __rasterize_buildings(
         self,
         buildings: geopandas.geodataframe.GeoDataFrame,
+        bbox: list | tuple | np.ndarray,
         raster_height=1427,
         raster_width=1361,
     ) -> np.ndarray:
-        xmin, ymin, xmax, ymax = buildings.total_bounds
+        xmin, ymin, xmax, ymax = bbox
         xres = (xmax - xmin) / raster_width
         yres = (ymax - ymin) / raster_height
         return rasterize(
@@ -161,9 +162,12 @@ class Pipeline:
         mean_cube = cube.mean_time()
         output_format = {"format": "netCDF"}
         output_options = {"output_parameters": output_format}
-        job = mean_cube.save_result(filename=output_file, format="netCDF")#, options=output_options)
+        job = mean_cube.save_result(
+            filename=output_file, format="netCDF"
+        )  # , options=output_options)
         job.start_and_wait()
 
+    @retry(openeo.rest.OpenEoApiPlainError, delay=1, backoff=2, max_delay=4)
     def __save_defined(
         self,
         bbox,

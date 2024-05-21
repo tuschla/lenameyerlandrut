@@ -54,7 +54,6 @@ APPLY_LR_DECAY_EPOCH = 30
     help="Weights directory",
 )
 def main(epochs, use_cpu, data_dir, val_split, save_dir):
-
     def get_training_augmentation():
         transform = [
             A.RandomCrop(height=16 * 23, width=16 * 40, always_apply=True),
@@ -80,7 +79,7 @@ def main(epochs, use_cpu, data_dir, val_split, save_dir):
     config_json_path = str(Path(data_dir).joinpath("rs19-config.json"))
     preprocessing_fn = smp.encoders.get_preprocessing_fn(ENCODER, ENCODER_WEIGHTS)
 
-    dataset = RailSem19Dataset(
+    dataset = BuildingSegmentation(
         images_dir,
         masks_dir,
         config_json_path,
@@ -109,9 +108,9 @@ def main(epochs, use_cpu, data_dir, val_split, save_dir):
     val_loader = DataLoader(val_dataset, batch_size=8, shuffle=True)
 
     loss = smp_utils.losses.DiceLoss()
-    #loss = smp.losses.LovaszLoss(
+    # loss = smp.losses.LovaszLoss(
     #    smp.losses.constants.MULTICLASS_MODE, per_image=False, ignore_index=None
-    #)
+    # )
 
     metrics = [
         smp_utils.metrics.IoU(threshold=0.5),
