@@ -57,8 +57,14 @@ def main(epochs, use_cpu, data_dir, val_split, save_dir):
     def get_training_augmentation():
         transform = [
             A.RandomCrop(height=16 * 23, width=16 * 40, always_apply=True),
-            A.HorizontalFlip(p=0.5),
-            A.RandomBrightnessContrast(p=0.2),
+            A.HorizontalFlip(p=0.5),  # Random horizontal flip
+            A.VerticalFlip(p=0.5),  # Random vertical flip
+            A.RandomRotate90(p=0.5),  # Random 90 degree rotation
+            A.Transpose(p=0.5),  # Randomly transpose the image
+            A.ShiftScaleRotate(
+                shift_limit=0.1, scale_limit=0.1, rotate_limit=15, p=0.5
+            ),  # Random shift, scale and rotate
+            A.RandomBrightnessContrast(p=0.3),  # Random brightness and contrast
         ]
         return A.Compose(transform)
 
@@ -76,19 +82,17 @@ def main(epochs, use_cpu, data_dir, val_split, save_dir):
     # TODO: change this to match with the satellite image dataset
     images_dir = str(Path(data_dir).joinpath("jpgs", "rs19_val"))
     masks_dir = str(Path(data_dir).joinpath("uint8", "rs19_val"))
-    config_json_path = str(Path(data_dir).joinpath("rs19-config.json"))
     preprocessing_fn = smp.encoders.get_preprocessing_fn(ENCODER, ENCODER_WEIGHTS)
 
     dataset = BuildingSegmentation(
         images_dir,
         masks_dir,
-        config_json_path,
         image_count=4200,
         augmentation=get_training_augmentation(),
         preprocessing=get_preprocessing(preprocessing_fn),
     )
 
-    model = smp.DeepLabV3Plus(
+    model = smp.Unet(
         encoder_name=ENCODER,
         encoder_weights=ENCODER_WEIGHTS,
         activation=ACTIVATION,
@@ -141,8 +145,8 @@ def main(epochs, use_cpu, data_dir, val_split, save_dir):
 
     writer = SummaryWriter()
     Path(save_dir).mkdir(exist_ok=True)
-    save_name = str(Path(save_dir).joinpath("building_seg_deeplabv3plus.pth"))
-    save_name_best = str(Path(save_dir).joinpath("building_seg_deeplabv3plus_best.pth"))
+    save_name = str(Path(save_dir).joinpath("building_seg_unet.pth"))
+    save_name_best = str(Path(save_dir).joinpath("building_seg_unet_best.pth"))
 
     min_score = 100
     min_score_epoch = epochs
