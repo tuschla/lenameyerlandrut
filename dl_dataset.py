@@ -58,7 +58,7 @@ class Pipeline:
         
         if location:
             bbox = location.raw['boundingbox']
-            return [float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])]
+            return [float(bbox[2]), float(bbox[0]), float(bbox[3]), float(bbox[1])]
         else:
             return None
 
