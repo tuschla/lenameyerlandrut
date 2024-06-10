@@ -12,3 +12,4 @@ tensorboardx
 tqdm
 retry
 rasterio
+geopy
