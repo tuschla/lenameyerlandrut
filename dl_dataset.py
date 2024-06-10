@@ -1,4 +1,5 @@
 import openeo, xarray, geopandas, pyrosm, cv2, itertools, os, shutil, multiprocessing
+from geopy.geocoders import Nominatim
 from tqdm import tqdm
 import numpy as np
 import pandas as pd
@@ -50,12 +51,23 @@ class Pipeline:
 
         for city in tqdm(cities):
             self.process_city(city, path)
+            
+    def __get_city_boundaries(self, city_name):
+        geolocator = Nominatim(user_agent="city_boundaries_app")
+        location = geolocator.geocode(city_name, exactly_one=True)
+        
+        if location:
+            bbox = location.raw['boundingbox']
+            return [float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])]
+        else:
+            return None
 
     def process_city(self, city: str, path: str):
         fp = pyrosm.get_data(city)
-        osm = pyrosm.OSM(fp)
-        bbox = self.__get_bbox(osm.get_boundaries("administrative", name=city))
-        bbox = list(np.round(bbox, 6))
+        #osm = pyrosm.OSM(fp)
+        #bbox = self.__get_bbox(osm.get_boundaries("administrative", name=city))
+        #bbox = list(np.round(bbox, 6))
+        bbox = self.__get_city_boundaries(city)
         print(city, bbox)
         osm = pyrosm.OSM(fp, bbox)
         spatial_extent = self.__bbox_to_spatial_extent(bbox)
@@ -182,7 +194,7 @@ class Pipeline:
             time_ranges_to_save = pd.date_range(
                 total_time_range[0],
                 total_time_range[1],
-                24,  # 24 means 23 time frames (minus ones that are too cloudy)
+                12,  # 24 means 23 time frames (minus ones that are too cloudy)
             ).date
 
         files = []
