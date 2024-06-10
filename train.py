@@ -34,6 +34,9 @@ APPLY_LR_DECAY_EPOCH = 30
     "--use_cpu", is_flag=True, help="Run training on CPU (will be much slower)"
 )
 @click.option(
+    "--use_unet", is_flag=True, help="Use Unet model"
+)
+@click.option(
     "-d",
     "--data_dir",
     type=click.Path(exists=True, file_okay=False, dir_okay=True),
@@ -53,7 +56,7 @@ APPLY_LR_DECAY_EPOCH = 30
     default="./weights/",
     help="Weights directory",
 )
-def main(epochs, use_cpu, data_dir, val_split, save_dir):
+def main(epochs, use_cpu, use_unet, data_dir, val_split, save_dir):
     def get_training_augmentation():
         transform = [
             A.RandomCrop(height=16 * 23, width=16 * 40, always_apply=True),
@@ -92,7 +95,7 @@ def main(epochs, use_cpu, data_dir, val_split, save_dir):
         preprocessing=get_preprocessing(preprocessing_fn),
     )
 
-    model = smp.Unet(
+    model_unet = smp.Unet(
         encoder_name=ENCODER,
         encoder_weights=ENCODER_WEIGHTS,
         activation=ACTIVATION,
@@ -102,6 +105,12 @@ def main(epochs, use_cpu, data_dir, val_split, save_dir):
         #     classes=len(dataset.classes),
         # ),
     )
+
+    model_basic = torch.nn.Sequential(
+        torch.nn.Conv2d(3, 32, kernel_size=3, padding=1), torch.nn.ReLU(),
+        torch.nn.Conv2d(32, 64, kernel_size=3, padding=1), torch.nn.ReLU(),
+        torch.nn.Conv2d(64, 128, kernel_size=3, padding=1), torch.nn.ReLU(),
+        torch.nn.Conv2d(128, 1, kernel_size=1, padding=0))
 
     n_train = int(len(dataset) * (1 - val_split))
     train_dataset, val_dataset = random_split(
@@ -121,12 +130,22 @@ def main(epochs, use_cpu, data_dir, val_split, save_dir):
         smp_utils.metrics.Accuracy(threshold=0.5),
     ]
 
-    optimizer = torch.optim.AdamW(
-        [
-            {"params": model.decoder.parameters(), "lr": LR_INITIAL},
-        ]
-    )
+    if use_unet:
+        model = model_unet
+        optimizer = torch.optim.AdamW(
+            [
+                {"params": model.decoder.parameters(), "lr": LR_INITIAL},
+            ]
+        )
 
+    else:
+        model = model_basic
+        optimizer = torch.optim.AdamW(
+            [
+                {"params": model.parameters(), "lr": LR_INITIAL},
+            ]
+        )
+        
     train_epoch = smp_utils.train.TrainEpoch(
         model,
         loss=loss,
