@@ -13,3 +13,4 @@ tqdm
 retry
 rasterio
 geopy
+netcdf4
