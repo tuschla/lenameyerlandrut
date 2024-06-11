@@ -1,4 +1,4 @@
-import openeo, xarray, geopandas, pyrosm, cv2, itertools, os, shutil, multiprocessing
+import openeo, xarray, geopandas, pyrosm, cv2, itertools, os, shutil, multiprocessing, shapely
 from geopy.geocoders import Nominatim
 from tqdm import tqdm
 import numpy as np
@@ -154,6 +154,22 @@ class Pipeline:
         )
         return datacube
 
+    # def __rasterize_buildings(
+    #     self,
+    #     buildings: geopandas.geodataframe.GeoDataFrame,
+    #     bbox: list | tuple | np.ndarray,
+    #     raster_height=1427,
+    #     raster_width=1361,
+    # ) -> np.ndarray:
+    #     xmin, ymin, xmax, ymax = bbox
+    #     xres = (xmax - xmin) / raster_width
+    #     yres = (ymax - ymin) / raster_height
+    #     return rasterize(
+    #         shapes=buildings.geometry,
+    #         out_shape=(raster_height, raster_width),
+    #         transform=(xres, 0, xmin, 0, -yres, ymax),
+    #     )
+        
     def __rasterize_buildings(
         self,
         buildings: geopandas.geodataframe.GeoDataFrame,
@@ -164,12 +180,40 @@ class Pipeline:
         xmin, ymin, xmax, ymax = bbox
         xres = (xmax - xmin) / raster_width
         yres = (ymax - ymin) / raster_height
-        return rasterize(
-            shapes=buildings.geometry,
-            out_shape=(raster_height, raster_width),
-            transform=(xres, 0, xmin, 0, -yres, ymax),
-        )
+        
+        def rasterize_geometry(geometry):
+            if geometry.is_empty:
+                return np.zeros((raster_height, raster_width), dtype=np.uint8)
+            
+            # Transform geometry to raster grid coordinates
+            transformed_geometry = shapely.affinity.scale(geometry, xfact=1/xres, yfact=1/yres, origin=(xmin, ymax))
+            transformed_geometry = shapely.affinity.translate(transformed_geometry, xoff=-xmin/xres, yoff=ymax/yres)
+            
+            # Create a bounding box around the transformed geometry
+            minx, miny, maxx, maxy = transformed_geometry.bounds
+            minx, miny = int(np.floor(minx)), int(np.floor(miny))
+            maxx, maxy = int(np.ceil(maxx)), int(np.ceil(maxy))
+            
+            # Clip bounds to raster dimensions
+            minx = max(minx, 0)
+            miny = max(miny, 0)
+            maxx = min(maxx, raster_width)
+            maxy = min(maxy, raster_height)
+            
+            # Rasterize the geometry within the bounding box
+            local_raster = np.zeros((raster_height, raster_width), dtype=np.uint8)
+            for row in range(miny, maxy):
+                for col in range(minx, maxx):
+                    if transformed_geometry.intersects(shapely.geometry.box(col, row, col + 1, row + 1)):
+                        local_raster[row, col] = 1
+            return local_raster
 
+        with multiprocessing.Pool() as pool:
+            results = pool.map(rasterize_geometry, buildings.geometry)
+            
+        combined_raster = np.maximum.reduce(results)
+        return combined_raster
+    
     def __download_datacube_mean(self, cube, output_file):
         mean_cube = cube.mean_time()
         output_format = {"format": "netCDF"}
