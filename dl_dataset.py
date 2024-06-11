@@ -76,7 +76,7 @@ class Pipeline:
 
         files = self.__save_defined(spatial_extent, f"{path}/{city}/")
 
-        for file in files:
+        for file in os.listdir(f"{path}/{city}/"):
             rgb = self.__nc_to_rgb(file)
             if self.rasterized_buildings is None:
                 raster_height, raster_width, _ = rgb.shape
@@ -100,7 +100,7 @@ class Pipeline:
                 ),
             )
 
-        shutil.rmtree(f"{path}/{city}/")
+        #shutil.rmtree(f"{path}/{city}/")
         print(f"Successfully built segmentation data set for {city}.")
 
     def __get_bbox(self, boundaries):
@@ -238,7 +238,7 @@ class Pipeline:
             time_ranges_to_save = pd.date_range(
                 total_time_range[0],
                 total_time_range[1],
-                12,  # 24 means 23 time frames (minus ones that are too cloudy)
+                24,  # 24 means 23 time frames (minus ones that are too cloudy)
             ).date
 
         files = []
@@ -260,6 +260,7 @@ class Pipeline:
                 continue
 
             if rm_clouds_anyways and self.__is_cloudy(filename):
+                print(f"{time_start}-{time_end} is too cloudy. Deleting...")
                 os.remove(filename)
                 continue
 
