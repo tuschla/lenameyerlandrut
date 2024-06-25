@@ -188,7 +188,7 @@ class Pipeline:
         original_crs = buildings.crs
         #print("Original Projection:", original_crs)
 
-        if crs:
+        #if crs:
             #print("New Projection:", buildings.crs)
 
         transform = (xres, 0, xmin, 0, -yres, ymax)
