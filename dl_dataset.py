@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 from rasterio.features import rasterize
 from retry import retry
+from shapely.geometry import Polygon
 
 
 def draw_mask(image: np.ndarray, mask: np.ndarray) -> np.ndarray:
@@ -154,65 +155,59 @@ class Pipeline:
         )
         return datacube
 
-    # def __rasterize_buildings(
-    #     self,
-    #     buildings: geopandas.geodataframe.GeoDataFrame,
-    #     bbox: list | tuple | np.ndarray,
-    #     raster_height=1427,
-    #     raster_width=1361,
-    # ) -> np.ndarray:
-    #     xmin, ymin, xmax, ymax = bbox
-    #     xres = (xmax - xmin) / raster_width
-    #     yres = (ymax - ymin) / raster_height
-    #     return rasterize(
-    #         shapes=buildings.geometry,
-    #         out_shape=(raster_height, raster_width),
-    #         transform=(xres, 0, xmin, 0, -yres, ymax),
-    #     )
-        
+
     def __rasterize_buildings(
         self,
         buildings: geopandas.geodataframe.GeoDataFrame,
         bbox: list | tuple | np.ndarray,
         raster_height=1427,
         raster_width=1361,
+        crs = "EPSG:25832"
     ) -> np.ndarray:
+        
         xmin, ymin, xmax, ymax = bbox
+            # Create a Polygon for the bounding box in EPSG:4326
+        bbox_geom = geopandas.GeoDataFrame(
+            index=[0], 
+            crs="EPSG:4326", 
+            geometry=[Polygon([(xmin, ymin), (xmax, ymin), (xmax, ymax), (xmin, ymax), (xmin, ymin)])]
+        )
+        
+        if crs:
+            # Transform the buildings and the bounding box to the new CRS
+            buildings = buildings.to_crs(crs)
+            bbox_geom = bbox_geom.to_crs(crs)
+        
+        # Extract the transformed bounding box coordinates
+        transformed_bbox = bbox_geom.geometry.iloc[0].bounds
+        xmin, ymin, xmax, ymax = transformed_bbox
+
         xres = (xmax - xmin) / raster_width
         yres = (ymax - ymin) / raster_height
-        
-        def rasterize_geometry(geometry):
-            if geometry.is_empty:
-                return np.zeros((raster_height, raster_width), dtype=np.uint8)
-            
-            # Transform geometry to raster grid coordinates
-            transformed_geometry = shapely.affinity.scale(geometry, xfact=1/xres, yfact=1/yres, origin=(xmin, ymax))
-            transformed_geometry = shapely.affinity.translate(transformed_geometry, xoff=-xmin/xres, yoff=ymax/yres)
-            
-            # Create a bounding box around the transformed geometry
-            minx, miny, maxx, maxy = transformed_geometry.bounds
-            minx, miny = int(np.floor(minx)), int(np.floor(miny))
-            maxx, maxy = int(np.ceil(maxx)), int(np.ceil(maxy))
-            
-            # Clip bounds to raster dimensions
-            minx = max(minx, 0)
-            miny = max(miny, 0)
-            maxx = min(maxx, raster_width)
-            maxy = min(maxy, raster_height)
-            
-            # Rasterize the geometry within the bounding box
-            local_raster = np.zeros((raster_height, raster_width), dtype=np.uint8)
-            for row in range(miny, maxy):
-                for col in range(minx, maxx):
-                    if transformed_geometry.intersects(shapely.geometry.box(col, row, col + 1, row + 1)):
-                        local_raster[row, col] = 1
-            return local_raster
 
-        with multiprocessing.Pool() as pool:
-            results = pool.map(rasterize_geometry, buildings.geometry)
-            
-        combined_raster = np.maximum.reduce(results)
-        return combined_raster
+        original_crs = buildings.crs
+        #print("Original Projection:", original_crs)
+
+        if crs:
+            #print("New Projection:", buildings.crs)
+
+        transform = (xres, 0, xmin, 0, -yres, ymax)
+
+        # Rasterize buildings
+        raster = rasterize(
+            shapes=((geom, 1) for geom in buildings.geometry),
+            out_shape=(raster_height, raster_width),
+            transform=transform,
+            fill=0,
+            dtype='float32'
+        )
+        
+        # Handle potential invalid values
+        raster = np.nan_to_num(raster, nan=0.0, posinf=255.0, neginf=0.0)
+        raster = np.clip(raster, 0, 255)
+        raster = raster.astype(np.uint8)
+
+        return raster
     
     def __download_datacube_mean(self, cube, output_file):
         mean_cube = cube.mean_time()
