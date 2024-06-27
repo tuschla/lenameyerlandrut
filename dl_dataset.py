@@ -78,7 +78,7 @@ class Pipeline:
         files = self.__save_defined(spatial_extent, f"{path}/{city}/")
 
         for file in os.listdir(f"{path}/{city}/"):
-            rgb = self.__nc_to_rgb(file)
+            rgb = self.__nc_to_rgb(os.path.join(f"{path}/{city}/", file))
             if self.rasterized_buildings is None:
                 raster_height, raster_width, _ = rgb.shape
                 self.rasterized_buildings = self.__rasterize_buildings(
@@ -134,7 +134,7 @@ class Pipeline:
         return np.linalg.norm(clouds) / len(clouds)
 
     def __is_cloudy(
-        self, filename, scl_thresh=5, ir_thresh=300, decision_threshold=0.1
+        self, filename, scl_thresh=5, ir_thresh=300, decision_threshold=0.3
     ):
         return (
             self.__cloudiness(self.__clouds(filename, scl_thresh, ir_thresh))
