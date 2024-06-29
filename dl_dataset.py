@@ -6,6 +6,7 @@ import pandas as pd
 from rasterio.features import rasterize
 from retry import retry
 from shapely.geometry import Polygon
+from pyproj import CRS
 
 
 def draw_mask(image: np.ndarray, mask: np.ndarray) -> np.ndarray:
@@ -78,11 +79,12 @@ class Pipeline:
         files = self.__save_defined(spatial_extent, f"{path}/{city}/")
 
         for file in os.listdir(f"{path}/{city}/"):
-            rgb = self.__nc_to_rgb(file)
+            rgb, epsg_code = self.__nc_to_rgb(file)
+            print(epsg_code)
             if self.rasterized_buildings is None:
                 raster_height, raster_width, _ = rgb.shape
                 self.rasterized_buildings = self.__rasterize_buildings(
-                    buildings, bbox, raster_height, raster_width
+                    buildings, bbox, raster_height, raster_width, crs= epsg_code
                 )
 
             cv2.imwrite(
@@ -134,7 +136,7 @@ class Pipeline:
         return np.linalg.norm(clouds) / len(clouds)
 
     def __is_cloudy(
-        self, filename, scl_thresh=5, ir_thresh=300, decision_threshold=0.1
+        self, filename, scl_thresh=5, ir_thresh=300, decision_threshold=0.3
     ):
         return (
             self.__cloudiness(self.__clouds(filename, scl_thresh, ir_thresh))
@@ -276,8 +278,11 @@ class Pipeline:
             .to_numpy()
             .transpose(1, 2, 0)
         )
+
+        epsg_code = CRS.from_cf(ds.crs.attrs)
+
         normalized = np.clip(data / 2000, 0, 1)
-        return normalized
+        return normalized, epsg_code
 
     def __nc_to_rgbir(self, filename):
         ds = xarray.load_dataset(filename)
@@ -299,10 +304,12 @@ class Pipeline:
 if __name__ == "__main__":
     pipeline = Pipeline(
         cities=[
-            "London",
-            "Moscow",
-            "Istanbul",
-            "Paris",
+           # "London",
+           #"amsterdam",
+            #"Moscow",
+            #"Istanbul",
+            #"Paris",
+            "augsburg",
             "Madrid",
             "Manchester",
             "Barcelona",
