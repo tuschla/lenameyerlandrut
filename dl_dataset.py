@@ -79,7 +79,7 @@ class Pipeline:
         files = self.__save_defined(spatial_extent, f"{path}/{city}/")
 
         for file in os.listdir(f"{path}/{city}/"):
-            rgb, epsg_code = self.__nc_to_rgb(file)
+            rgb, epsg_code = self.__nc_to_rgb(os.path.join(f"{path}/{city}/", file))
             print(epsg_code)
             if self.rasterized_buildings is None:
                 raster_height, raster_width, _ = rgb.shape
