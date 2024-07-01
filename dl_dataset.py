@@ -63,24 +63,39 @@ class Pipeline:
             return [float(bbox[2]), float(bbox[0]), float(bbox[3]), float(bbox[1])]
         else:
             return None
-        
-    def __save_image_tiles(self, file, image, mask, path, city, date, tile_size=64, step_size=64):
+
+    def __save_image_tiles(
+        self, file, image, mask, path, city, date, tile_size=64, step_size=64
+    ):
         height, width, _ = image.shape
         for y in range(0, height, step_size):
             for x in range(0, width, step_size):
-                tile = image[y:y+tile_size, x:x+tile_size]
-                mask_tile = mask[y:y+tile_size, x:x+tile_size]
+                tile = image[y : y + tile_size, x : x + tile_size]
+                mask_tile = mask[y : y + tile_size, x : x + tile_size]
 
                 # Only save the tile if it matches the desired tile size and is not cloudy
-                if tile.shape[0] == tile_size and tile.shape[1] == tile_size and not self.__is_cloudy(file, x, y, tile_size) and np.any(mask_tile != 0):
+                if (
+                    tile.shape[0] == tile_size
+                    and tile.shape[1] == tile_size
+                    and not self.__is_cloudy(file, x, y, tile_size)
+                    and np.any(mask_tile != 0)
+                ):
                     tile_filename = f"{path}/imgs/{city}_{date}_{x}_{y}.jpg"
                     mask_tile_filename = f"{path}/masks/{city}_{date}_{x}_{y}.png"
                     test_tile_filename = f"{path}/test/{city}_{date}_{x}_{y}.png"
 
-                    cv2.imwrite(tile_filename, cv2.cvtColor((tile * 255).astype(np.uint8), cv2.COLOR_RGB2BGR))
+                    cv2.imwrite(
+                        tile_filename,
+                        cv2.cvtColor((tile * 255).astype(np.uint8), cv2.COLOR_RGB2BGR),
+                    )
                     cv2.imwrite(mask_tile_filename, (mask_tile * 255).astype(np.uint8))
-                    cv2.imwrite(test_tile_filename, cv2.cvtColor((draw_mask(tile, mask_tile) * 255).astype(np.uint8), cv2.COLOR_RGB2BGR))
-
+                    cv2.imwrite(
+                        test_tile_filename,
+                        cv2.cvtColor(
+                            (draw_mask(tile, mask_tile) * 255).astype(np.uint8),
+                            cv2.COLOR_RGB2BGR,
+                        ),
+                    )
 
     def process_city(self, city: str, path: str):
         fp = pyrosm.get_data(city)
@@ -102,8 +117,15 @@ class Pipeline:
                     buildings, bbox, raster_height, raster_width, crs=epsg_code
                 )
 
-            self.__save_image_tiles(os.path.join(f"{path}/{city}/", file), rgb, self.rasterized_buildings, path, city, file.replace(".nc", ""))
-            
+            self.__save_image_tiles(
+                os.path.join(f"{path}/{city}/", file),
+                rgb,
+                self.rasterized_buildings,
+                path,
+                city,
+                file.replace(".nc", ""),
+            )
+
         print(f"Successfully built segmentation data set for {city}.")
 
     def __get_bbox(self, boundaries):
@@ -135,8 +157,8 @@ class Pipeline:
     def __clouds(self, filename, x, y, tile_size, scl_thresh=5, ir_thresh=300):
         scl = self.__nc_to_scl_band(filename)
         ir = self.__nc_to_ir_band(filename)
-        scl_tile = scl[y:y+tile_size, x:x+tile_size]
-        ir_tile = ir[y:y+tile_size, x:x+tile_size]
+        scl_tile = scl[y : y + tile_size, x : x + tile_size]
+        ir_tile = ir[y : y + tile_size, x : x + tile_size]
 
         scl_condition = scl_tile > scl_thresh
         ir_condition = ir_tile < ir_thresh
@@ -145,8 +167,17 @@ class Pipeline:
 
     def __cloudiness(self, clouds):
         return np.linalg.norm(clouds) / len(clouds)
-        
-    def __is_cloudy(self, filename, x, y, tile_size, scl_thresh=5, ir_thresh=300, decision_threshold=0.1):
+
+    def __is_cloudy(
+        self,
+        filename,
+        x,
+        y,
+        tile_size,
+        scl_thresh=5,
+        ir_thresh=300,
+        decision_threshold=0.1,
+    ):
         clouds = self.__clouds(filename, x, y, tile_size, scl_thresh, ir_thresh)
         return self.__cloudiness(clouds) > decision_threshold
 
@@ -273,8 +304,11 @@ class Pipeline:
             .to_numpy()
             .transpose(1, 2, 0)
         )
+
+        epsg_code = CRS.from_cf(ds.crs.attrs)
+
         normalized = np.clip(data / 2000, 0, 1)
-        return normalized
+        return normalized, epsg_code
 
     def __get_epsg_code(self, filename):
         ds = xarray.load_dataset(filename)
@@ -302,9 +336,11 @@ if __name__ == "__main__":
     pipeline = Pipeline(
         cities=[
             "London",
+            "amsterdam",
             "Moscow",
             "Istanbul",
             "Paris",
+            "augsburg",
             "Madrid",
             "Manchester",
             "Barcelona",
