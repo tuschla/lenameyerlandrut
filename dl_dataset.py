@@ -6,6 +6,7 @@ import pandas as pd
 from rasterio.features import rasterize
 from retry import retry
 from shapely.geometry import Polygon
+from pyproj import CRS
 
 
 def draw_mask(image: np.ndarray, mask: np.ndarray) -> np.ndarray:
@@ -52,22 +53,37 @@ class Pipeline:
 
         for city in tqdm(cities):
             self.process_city(city, path)
-            
+
     def __get_city_boundaries(self, city_name):
         geolocator = Nominatim(user_agent="city_boundaries_app")
         location = geolocator.geocode(city_name, exactly_one=True)
-        
+
         if location:
-            bbox = location.raw['boundingbox']
+            bbox = location.raw["boundingbox"]
             return [float(bbox[2]), float(bbox[0]), float(bbox[3]), float(bbox[1])]
         else:
             return None
+        
+    def __save_image_tiles(self, file, image, mask, path, city, date, tile_size=64, step_size=64):
+        height, width, _ = image.shape
+        for y in range(0, height, step_size):
+            for x in range(0, width, step_size):
+                tile = image[y:y+tile_size, x:x+tile_size]
+                mask_tile = mask[y:y+tile_size, x:x+tile_size]
+
+                # Only save the tile if it matches the desired tile size and is not cloudy
+                if tile.shape[0] == tile_size and tile.shape[1] == tile_size and not self.__is_cloudy(file, x, y, tile_size) and np.any(mask_tile != 0):
+                    tile_filename = f"{path}/imgs/{city}_{date}_{x}_{y}.jpg"
+                    mask_tile_filename = f"{path}/masks/{city}_{date}_{x}_{y}.png"
+                    test_tile_filename = f"{path}/test/{city}_{date}_{x}_{y}.png"
+
+                    cv2.imwrite(tile_filename, cv2.cvtColor((tile * 255).astype(np.uint8), cv2.COLOR_RGB2BGR))
+                    cv2.imwrite(mask_tile_filename, (mask_tile * 255).astype(np.uint8))
+                    cv2.imwrite(test_tile_filename, cv2.cvtColor((draw_mask(tile, mask_tile) * 255).astype(np.uint8), cv2.COLOR_RGB2BGR))
+
 
     def process_city(self, city: str, path: str):
         fp = pyrosm.get_data(city)
-        #osm = pyrosm.OSM(fp)
-        #bbox = self.__get_bbox(osm.get_boundaries("administrative", name=city))
-        #bbox = list(np.round(bbox, 6))
         bbox = self.__get_city_boundaries(city)
         print(city, bbox)
         osm = pyrosm.OSM(fp, bbox)
@@ -78,30 +94,16 @@ class Pipeline:
         files = self.__save_defined(spatial_extent, f"{path}/{city}/")
 
         for file in os.listdir(f"{path}/{city}/"):
-            rgb = self.__nc_to_rgb(file)
+            rgb = self.__nc_to_rgb(os.path.join(f"{path}/{city}/", file))
+            epsg_code = self.__get_epsg_code(os.path.join(f"{path}/{city}/", file))
             if self.rasterized_buildings is None:
                 raster_height, raster_width, _ = rgb.shape
                 self.rasterized_buildings = self.__rasterize_buildings(
-                    buildings, bbox, raster_height, raster_width
+                    buildings, bbox, raster_height, raster_width, crs=epsg_code
                 )
 
-            cv2.imwrite(
-                f"{path}/imgs/{city}_{hash(file)}.jpg",
-                cv2.cvtColor((rgb * 255).astype(np.uint8), cv2.COLOR_RGB2BGR),
-            )
-            cv2.imwrite(
-                f"{path}/masks/{city}_{hash(file)}.png",
-                (self.rasterized_buildings * 255).astype(np.uint8),
-            )
-            cv2.imwrite(
-                f"{path}/test/{city}_{hash(file)}.png",
-                cv2.cvtColor(
-                    (draw_mask(rgb, self.rasterized_buildings) * 255).astype(np.uint8),
-                    cv2.COLOR_RGB2BGR,
-                ),
-            )
-
-        #shutil.rmtree(f"{path}/{city}/")
+            self.__save_image_tiles(os.path.join(f"{path}/{city}/", file), rgb, self.rasterized_buildings, path, city, file.replace(".nc", ""))
+            
         print(f"Successfully built segmentation data set for {city}.")
 
     def __get_bbox(self, boundaries):
@@ -130,16 +132,23 @@ class Pipeline:
         clouds = np.logical_and(scl, ~ir)
         return clouds
 
+    def __clouds(self, filename, x, y, tile_size, scl_thresh=5, ir_thresh=300):
+        scl = self.__nc_to_scl_band(filename)
+        ir = self.__nc_to_ir_band(filename)
+        scl_tile = scl[y:y+tile_size, x:x+tile_size]
+        ir_tile = ir[y:y+tile_size, x:x+tile_size]
+
+        scl_condition = scl_tile > scl_thresh
+        ir_condition = ir_tile < ir_thresh
+        clouds = np.logical_and(scl_condition, ~ir_condition)
+        return clouds
+
     def __cloudiness(self, clouds):
         return np.linalg.norm(clouds) / len(clouds)
-
-    def __is_cloudy(
-        self, filename, scl_thresh=5, ir_thresh=300, decision_threshold=0.1
-    ):
-        return (
-            self.__cloudiness(self.__clouds(filename, scl_thresh, ir_thresh))
-            > decision_threshold
-        )
+        
+    def __is_cloudy(self, filename, x, y, tile_size, scl_thresh=5, ir_thresh=300, decision_threshold=0.1):
+        clouds = self.__clouds(filename, x, y, tile_size, scl_thresh, ir_thresh)
+        return self.__cloudiness(clouds) > decision_threshold
 
     def __bbox_to_spatial_extent(self, bbox) -> dict:
         west, south, east, north = bbox
@@ -155,29 +164,38 @@ class Pipeline:
         )
         return datacube
 
-
     def __rasterize_buildings(
         self,
         buildings: geopandas.geodataframe.GeoDataFrame,
         bbox: list | tuple | np.ndarray,
         raster_height=1427,
         raster_width=1361,
-        crs = "EPSG:25832"
+        crs="EPSG:25832",
     ) -> np.ndarray:
-        
+
         xmin, ymin, xmax, ymax = bbox
-            # Create a Polygon for the bounding box in EPSG:4326
+        # Create a Polygon for the bounding box in EPSG:4326
         bbox_geom = geopandas.GeoDataFrame(
-            index=[0], 
-            crs="EPSG:4326", 
-            geometry=[Polygon([(xmin, ymin), (xmax, ymin), (xmax, ymax), (xmin, ymax), (xmin, ymin)])]
+            index=[0],
+            crs="EPSG:4326",
+            geometry=[
+                Polygon(
+                    [
+                        (xmin, ymin),
+                        (xmax, ymin),
+                        (xmax, ymax),
+                        (xmin, ymax),
+                        (xmin, ymin),
+                    ]
+                )
+            ],
         )
-        
+
         if crs:
             # Transform the buildings and the bounding box to the new CRS
             buildings = buildings.to_crs(crs)
             bbox_geom = bbox_geom.to_crs(crs)
-        
+
         # Extract the transformed bounding box coordinates
         transformed_bbox = bbox_geom.geometry.iloc[0].bounds
         xmin, ymin, xmax, ymax = transformed_bbox
@@ -185,30 +203,20 @@ class Pipeline:
         xres = (xmax - xmin) / raster_width
         yres = (ymax - ymin) / raster_height
 
-        original_crs = buildings.crs
-        #print("Original Projection:", original_crs)
-
-        #if crs:
-            #print("New Projection:", buildings.crs)
-
-        transform = (xres, 0, xmin, 0, -yres, ymax)
-
         # Rasterize buildings
         raster = rasterize(
-            shapes=((geom, 1) for geom in buildings.geometry),
+            shapes=buildings.geometry,
             out_shape=(raster_height, raster_width),
-            transform=transform,
-            fill=0,
-            dtype='float32'
+            transform=(xres, 0, xmin, 0, -yres, ymax),
         )
-        
+
         # Handle potential invalid values
         raster = np.nan_to_num(raster, nan=0.0, posinf=255.0, neginf=0.0)
         raster = np.clip(raster, 0, 255)
         raster = raster.astype(np.uint8)
 
         return raster
-    
+
     def __download_datacube_mean(self, cube, output_file):
         mean_cube = cube.mean_time()
         output_format = {"format": "netCDF"}
@@ -226,8 +234,7 @@ class Pipeline:
         total_time_range=["2022-05-01", "2024-05-01"],
         time_ranges_to_save=None,
         bands=["B04", "B03", "B02", "B08", "SCL"],
-        max_cloud_cover=20,
-        rm_clouds_anyways=True,
+        max_cloud_cover=40,
     ) -> list[str]:
         if not time_ranges_to_save:
             time_ranges_to_save = pd.date_range(
@@ -254,19 +261,9 @@ class Pipeline:
                 )
                 continue
 
-            if rm_clouds_anyways and self.__is_cloudy(filename):
-                print(f"{time_start}-{time_end} is too cloudy. Deleting...")
-                os.remove(filename)
-                continue
-
             files.append(filename)
 
         return files
-
-    def __save_result(self, datacube, filename):
-        result = datacube.save_result(filename)
-        job = result.create_job()
-        job.start_and_wait().download_results()
 
     def __nc_to_rgb(self, filename):
         ds = xarray.load_dataset(filename)
@@ -278,6 +275,11 @@ class Pipeline:
         )
         normalized = np.clip(data / 2000, 0, 1)
         return normalized
+
+    def __get_epsg_code(self, filename):
+        ds = xarray.load_dataset(filename)
+        epsg_code = CRS.from_cf(ds.crs.attrs)
+        return epsg_code
 
     def __nc_to_rgbir(self, filename):
         ds = xarray.load_dataset(filename)
