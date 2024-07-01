@@ -305,10 +305,8 @@ class Pipeline:
             .transpose(1, 2, 0)
         )
 
-        epsg_code = CRS.from_cf(ds.crs.attrs)
-
         normalized = np.clip(data / 2000, 0, 1)
-        return normalized, epsg_code
+        return normalized
 
     def __get_epsg_code(self, filename):
         ds = xarray.load_dataset(filename)
