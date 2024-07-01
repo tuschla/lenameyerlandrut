@@ -333,8 +333,8 @@ class Pipeline:
 if __name__ == "__main__":
     pipeline = Pipeline(
         cities=[
-            "London",
-            "amsterdam",
+            #"London",
+            "Amsterdam",
             "Moscow",
             "Istanbul",
             "Paris",
