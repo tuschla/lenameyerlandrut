@@ -78,7 +78,8 @@ class Pipeline:
                     tile.shape[0] == tile_size
                     and tile.shape[1] == tile_size
                     and not self.__is_cloudy(file, x, y, tile_size)
-                    and np.any(mask_tile != 0)
+                    and not self.__has_download_artefacts(file, x, y, tile_size)
+                    #and np.any(mask_tile != 0)
                 ):
                     tile_filename = f"{path}/imgs/{city}_{date}_{x}_{y}.jpg"
                     mask_tile_filename = f"{path}/masks/{city}_{date}_{x}_{y}.png"
@@ -176,10 +177,28 @@ class Pipeline:
         tile_size,
         scl_thresh=5,
         ir_thresh=300,
-        decision_threshold=0.1,
+        decision_threshold=0.05,
     ):
         clouds = self.__clouds(filename, x, y, tile_size, scl_thresh, ir_thresh)
         return self.__cloudiness(clouds) > decision_threshold
+    
+    def __has_download_artefacts(
+        self,
+        filename,
+        x,
+        y,
+        tile_size,
+        threshold = 20,
+    ):
+        rgb = self.__nc_to_rgb(filename)
+        rgb_tile = rgb[y : y + tile_size, x : x + tile_size]
+        grayscale_tile = cv2.cvtColor(rgb_tile, cv2.COLOR_RGB2GRAY)
+        black_pixel_count = cv2.countNonZero((grayscale_tile == 0).astype(int))
+        total_pixels = grayscale_tile.shape[0] * grayscale_tile.shape[1]
+        black_pixel_percentage = (black_pixel_count / total_pixels) * 100
+        return black_pixel_percentage > threshold
+
+
 
     def __bbox_to_spatial_extent(self, bbox) -> dict:
         west, south, east, north = bbox
@@ -334,16 +353,16 @@ if __name__ == "__main__":
     pipeline = Pipeline(
         cities=[
             #"London",
-            "Amsterdam",
-            "Moscow",
-            "Istanbul",
-            "Paris",
-            "augsburg",
-            "Madrid",
+            # "Amsterdam",
+            #"Bremen",
+            #"Madrid",
             "Manchester",
             "Barcelona",
             "Copenhagen",
             "Hamburg",
             "Warsaw",
+            "Moscow",
+            "Istanbul",
+            "Paris",
         ]
     )
