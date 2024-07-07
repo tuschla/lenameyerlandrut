@@ -14,3 +14,4 @@ retry
 rasterio
 geopy
 netcdf4
+ray[tune]

@@ -7,6 +7,8 @@ from rasterio.features import rasterize
 from retry import retry
 from shapely.geometry import Polygon
 from pyproj import CRS
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from tqdm import tqdm
 
 
 def draw_mask(image: np.ndarray, mask: np.ndarray) -> np.ndarray:
@@ -38,11 +40,13 @@ class Pipeline:
         sat_backend: str = "https://openeo.dataspace.copernicus.eu/openeo/1.2",
         cities: list[str] = pyrosm.data.available["cities"],
         path: str = "segmentation_dataset",
+        custom_bbox: dict = None,
     ):
         self.con = openeo.connect(sat_backend)
         self.con.authenticate_oidc()
         self.cities = cities
         self.__make_dirs(path)
+        self.custom_bbox = custom_bbox
 
         # with multiprocessing.Pool(processes=3) as pool: # openeo max connections is 3 for some reason
         #     results = []
@@ -64,50 +68,65 @@ class Pipeline:
         else:
             return None
 
-    def __save_image_tiles(
-        self, file, image, mask, path, city, date, tile_size=64, step_size=64
-    ):
+    def __save_image_tiles(self, file, image, mask, path, city, date, tile_size=64, step_size=64):
         height, width, _ = image.shape
+
+        scl_band = self.__nc_to_scl_band(file)
+        ir_band = self.__nc_to_ir_band(file)
+        rgb_band = self.__nc_to_rgb(file)
+
+        tasks = []
         for y in range(0, height, step_size):
             for x in range(0, width, step_size):
-                tile = image[y : y + tile_size, x : x + tile_size]
-                mask_tile = mask[y : y + tile_size, x : x + tile_size]
+                tasks.append((x, y, tile_size, scl_band, ir_band, rgb_band, image, mask, path, city, date))
 
-                # Only save the tile if it matches the desired tile size and is not cloudy
-                if (
-                    tile.shape[0] == tile_size
-                    and tile.shape[1] == tile_size
-                    and not self.__is_cloudy(file, x, y, tile_size)
-                    and not self.__has_download_artefacts(file, x, y, tile_size)
-                    #and np.any(mask_tile != 0)
-                ):
-                    tile_filename = f"{path}/imgs/{city}_{date}_{x}_{y}.jpg"
-                    mask_tile_filename = f"{path}/masks/{city}_{date}_{x}_{y}.png"
-                    test_tile_filename = f"{path}/test/{city}_{date}_{x}_{y}.png"
+        with ThreadPoolExecutor() as executor:
+            futures = {executor.submit(self.__process_tile, *task): task for task in tasks}
+            for _ in tqdm(as_completed(futures), total=len(futures), desc="Processing tiles"):
+                pass
 
-                    cv2.imwrite(
-                        tile_filename,
-                        cv2.cvtColor((tile * 255).astype(np.uint8), cv2.COLOR_RGB2BGR),
-                    )
-                    cv2.imwrite(mask_tile_filename, (mask_tile * 255).astype(np.uint8))
-                    cv2.imwrite(
-                        test_tile_filename,
-                        cv2.cvtColor(
-                            (draw_mask(tile, mask_tile) * 255).astype(np.uint8),
-                            cv2.COLOR_RGB2BGR,
-                        ),
-                    )
+    def __process_tile(self, x, y, tile_size, scl_band, ir_band, rgb_band, image, mask, path, city, date):
+        tile = image[y : y + tile_size, x : x + tile_size]
+        mask_tile = mask[y : y + tile_size, x : x + tile_size]
+
+        if (
+            tile.shape[0] == tile_size
+            and tile.shape[1] == tile_size
+            and not self.__is_cloudy_from_bands(scl_band, x, y, tile_size)
+            #and not self.__has_download_artefacts_from_band(rgb_band, x, y, tile_size)
+            and np.any(mask_tile != 0)
+            and not self.__is_too_dark(tile)
+        ):
+            tile_filename = f"{path}/imgs/{city}_{date}_{x}_{y}.jpg"
+            mask_tile_filename = f"{path}/masks/{city}_{date}_{x}_{y}.png"
+            test_tile_filename = f"{path}/test/{city}_{date}_{x}_{y}.png"
+
+            cv2.imwrite(
+                tile_filename,
+                cv2.cvtColor((tile * 255).astype(np.uint8), cv2.COLOR_RGB2BGR),
+            )
+            cv2.imwrite(mask_tile_filename, (mask_tile * 255).astype(np.uint8))
+            cv2.imwrite(
+                test_tile_filename,
+                cv2.cvtColor(
+                    (draw_mask(tile, mask_tile) * 255).astype(np.uint8),
+                    cv2.COLOR_RGB2BGR,
+                ),
+            )
 
     def process_city(self, city: str, path: str):
         fp = pyrosm.get_data(city)
-        bbox = self.__get_city_boundaries(city)
+        if self.custom_bbox:
+            bbox = self.custom_bbox[city]
+        else:
+            bbox = self.__get_city_boundaries(city)
         print(city, bbox)
         osm = pyrosm.OSM(fp, bbox)
         spatial_extent = self.__bbox_to_spatial_extent(bbox)
         buildings = osm.get_buildings()
         self.rasterized_buildings = None
 
-        files = self.__save_defined(spatial_extent, f"{path}/{city}/")
+        # files = self.__save_defined(spatial_extent, f"{path}/{city}/")
 
         for file in os.listdir(f"{path}/{city}/"):
             rgb = self.__nc_to_rgb(os.path.join(f"{path}/{city}/", file))
@@ -149,56 +168,35 @@ class Pipeline:
         if not os.path.exists(test_dir):
             os.mkdir(test_dir)
 
-    def __clouds(self, filename, scl_thresh=5, ir_thresh=300):
-        scl = scl_thresh < self.__nc_to_scl_band(filename)
-        ir = ir_thresh > self.__nc_to_ir_band(filename)
-        clouds = np.logical_and(scl, ~ir)
-        return clouds
 
-    def __clouds(self, filename, x, y, tile_size, scl_thresh=5, ir_thresh=300):
-        scl = self.__nc_to_scl_band(filename)
-        ir = self.__nc_to_ir_band(filename)
-        scl_tile = scl[y : y + tile_size, x : x + tile_size]
-        ir_tile = ir[y : y + tile_size, x : x + tile_size]
-
-        scl_condition = scl_tile > scl_thresh
-        ir_condition = ir_tile < ir_thresh
-        clouds = np.logical_and(scl_condition, ~ir_condition)
-        return clouds
-
-    def __cloudiness(self, clouds):
-        return np.linalg.norm(clouds) / len(clouds)
-
-    def __is_cloudy(
+    def __is_cloudy_from_bands(
         self,
-        filename,
+        scl_band,
         x,
         y,
         tile_size,
-        scl_thresh=5,
-        ir_thresh=300,
-        decision_threshold=0.05,
     ):
-        clouds = self.__clouds(filename, x, y, tile_size, scl_thresh, ir_thresh)
-        return self.__cloudiness(clouds) > decision_threshold
-    
-    def __has_download_artefacts(
-        self,
-        filename,
-        x,
-        y,
-        tile_size,
-        threshold = 20,
+        tile = scl_band[y : y + tile_size, x : x + tile_size]
+        target_values = [0, 1, 2, 3, 8, 9, 10]
+        total_elements = tile.size
+        total_count = np.sum(np.isin(tile, target_values))
+        return (total_count / total_elements) > 0.2
+
+
+    def __has_download_artefacts_from_band(
+        self, rgb_band, x, y, tile_size, threshold=10
     ):
-        rgb = self.__nc_to_rgb(filename)
-        rgb_tile = rgb[y : y + tile_size, x : x + tile_size]
+        rgb_tile = rgb_band[y : y + tile_size, x : x + tile_size]
         grayscale_tile = cv2.cvtColor(rgb_tile, cv2.COLOR_RGB2GRAY)
         black_pixel_count = cv2.countNonZero((grayscale_tile == 0).astype(int))
         total_pixels = grayscale_tile.shape[0] * grayscale_tile.shape[1]
         black_pixel_percentage = (black_pixel_count / total_pixels) * 100
         return black_pixel_percentage > threshold
-
-
+    
+    def __is_too_dark(self, tile, brightness_threshold=30):
+        grayscale_tile = cv2.cvtColor(tile, cv2.COLOR_RGB2GRAY)
+        mean_brightness = np.mean(grayscale_tile)
+        return mean_brightness < brightness_threshold
 
     def __bbox_to_spatial_extent(self, bbox) -> dict:
         west, south, east, north = bbox
@@ -352,17 +350,31 @@ class Pipeline:
 if __name__ == "__main__":
     pipeline = Pipeline(
         cities=[
-            #"London",
-            # "Amsterdam",
-            #"Bremen",
-            #"Madrid",
+            "London",
+            "Amsterdam",
+            "Bremen",
+            "Madrid",
             "Manchester",
             "Barcelona",
             "Copenhagen",
             "Hamburg",
             "Warsaw",
+            "Paris",
+        ],
+        path="segmentation_dataset_train",
+    )
+
+    pipeline = Pipeline(
+        cities=[
+            "Augsburg",
             "Moscow",
             "Istanbul",
-            "Paris",
-        ]
+        ],
+        path="segmentation_dataset_val",
+    )
+
+    pipeline = Pipeline(
+        cities=["Berlin"],
+        path="segmentation_dataset_test",
+        custom_bbox={"Berlin": [13.294333, 52.454927, 13.500205, 52.574409]},
     )
