@@ -86,14 +86,14 @@ class Pipeline:
                 pass
 
     def __process_tile(self, x, y, tile_size, scl_band, ir_band, rgb_band, image, mask, path, city, date):
-        tile = image[y : y + tile_size, x : x + tile_size]
+        tile = rgb_band[y : y + tile_size, x : x + tile_size]
         mask_tile = mask[y : y + tile_size, x : x + tile_size]
 
         if (
             tile.shape[0] == tile_size
             and tile.shape[1] == tile_size
             and not self.__is_cloudy_from_bands(scl_band, x, y, tile_size)
-            #and not self.__has_download_artefacts_from_band(rgb_band, x, y, tile_size)
+            and not self.__has_download_artefacts_from_band(tile, x, y, tile_size)
             and np.any(mask_tile != 0)
             and not self.__is_too_dark(tile)
         ):
