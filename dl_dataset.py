@@ -92,10 +92,10 @@ class Pipeline:
         if (
             tile.shape[0] == tile_size
             and tile.shape[1] == tile_size
-            and not self.__is_cloudy_from_bands(scl_band, x, y, tile_size)
-            and not self.__has_download_artefacts_from_band(tile, x, y, tile_size)
-            and np.any(mask_tile != 0)
-            and not self.__is_too_dark(tile)
+            # and not self.__is_cloudy_from_bands(scl_band, x, y, tile_size)
+            # and not self.__has_download_artefacts_from_band(tile, x, y, tile_size)
+            # and np.any(mask_tile != 0)
+            # and not self.__is_too_dark(tile)
         ):
             tile_filename = f"{path}/imgs/{city}_{date}_{x}_{y}.jpg"
             mask_tile_filename = f"{path}/masks/{city}_{date}_{x}_{y}.png"
@@ -126,7 +126,7 @@ class Pipeline:
         buildings = osm.get_buildings()
         self.rasterized_buildings = None
 
-        # files = self.__save_defined(spatial_extent, f"{path}/{city}/")
+        files = self.__save_defined(spatial_extent, f"{path}/{city}/")
 
         for file in os.listdir(f"{path}/{city}/"):
             rgb = self.__nc_to_rgb(os.path.join(f"{path}/{city}/", file))
@@ -202,15 +202,19 @@ class Pipeline:
         west, south, east, north = bbox
         return {"west": west, "south": south, "east": east, "north": north}
 
-    def __copernicus_datacube(self, bbox, time_range, bands, max_cloud_cover=5):
-        datacube = self.con.load_collection(
+    def __copernicus_datacube(self, bbox, time_range, bands):
+        s2_cube = self.con.load_collection(
             "SENTINEL2_L2A",
-            spatial_extent=bbox,
             temporal_extent=time_range,
+            spatial_extent=bbox,
             bands=bands,
-            max_cloud_cover=max_cloud_cover,
+            max_cloud_cover=30,
         )
-        return datacube
+        scl_band = s2_cube.band("SCL")
+        cloud_mask = (scl_band == 3) | (scl_band == 8) | (scl_band == 9)
+        cloud_mask = cloud_mask.resample_cube_spatial(s2_cube)
+        composite_masked = s2_cube.mask(cloud_mask).mean_time()
+        return composite_masked
 
     def __rasterize_buildings(
         self,
@@ -279,7 +283,7 @@ class Pipeline:
         self,
         bbox,
         out_folder,
-        total_time_range=["2022-05-01", "2024-05-01"],
+        total_time_range=["2023-05-01", "2024-05-01"],
         time_ranges_to_save=None,
         bands=["B04", "B03", "B02", "B08", "SCL"],
         max_cloud_cover=40,
@@ -288,13 +292,13 @@ class Pipeline:
             time_ranges_to_save = pd.date_range(
                 total_time_range[0],
                 total_time_range[1],
-                24,  # 24 means 23 time frames (minus ones that are too cloudy)
+                1,  # 24 means 23 time frames (minus ones that are too cloudy)
             ).date
 
         files = []
         for time_start, time_end in itertools.pairwise(time_ranges_to_save):
             datacube = self.__copernicus_datacube(
-                bbox, [time_start, time_end], bands, max_cloud_cover=max_cloud_cover
+                bbox, [time_start, time_end], bands,
             )
             if not os.path.exists(out_folder):
                 os.mkdir(out_folder)
@@ -302,7 +306,7 @@ class Pipeline:
 
             try:
                 # self.__download_datacube_mean(datacube, filename)
-                datacube.mean_time().download(filename)
+                datacube.download(filename)
             except openeo.rest.OpenEoApiError:
                 print(
                     f"No data available in timeframe {time_start}-{time_end} for {max_cloud_cover} % cloud coverage. Skipping..."
@@ -350,7 +354,6 @@ class Pipeline:
 if __name__ == "__main__":
     pipeline = Pipeline(
         cities=[
-            "London",
             "Amsterdam",
             "Bremen",
             "Madrid",
@@ -360,6 +363,7 @@ if __name__ == "__main__":
             "Hamburg",
             "Warsaw",
             "Paris",
+            "London",
         ],
         path="segmentation_dataset_train",
     )
