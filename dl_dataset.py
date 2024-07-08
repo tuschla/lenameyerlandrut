@@ -2,6 +2,7 @@ import openeo, xarray, geopandas, pyrosm, cv2, itertools, os, shutil, multiproce
 from geopy.geocoders import Nominatim
 from tqdm import tqdm
 import numpy as np
+import requests
 import pandas as pd
 from rasterio.features import rasterize
 from retry import retry
@@ -68,7 +69,7 @@ class Pipeline:
         else:
             return None
 
-    def __save_image_tiles(self, file, image, mask, path, city, date, tile_size=64, step_size=64):
+    def __save_image_tiles(self, file, image, mask, path, city, date, tile_size=128, step_size=128):
         height, width, _ = image.shape
 
         scl_band = self.__nc_to_scl_band(file)
@@ -168,36 +169,6 @@ class Pipeline:
         if not os.path.exists(test_dir):
             os.mkdir(test_dir)
 
-
-    def __is_cloudy_from_bands(
-        self,
-        scl_band,
-        x,
-        y,
-        tile_size,
-    ):
-        tile = scl_band[y : y + tile_size, x : x + tile_size]
-        target_values = [0, 1, 2, 3, 8, 9, 10]
-        total_elements = tile.size
-        total_count = np.sum(np.isin(tile, target_values))
-        return (total_count / total_elements) > 0.2
-
-
-    def __has_download_artefacts_from_band(
-        self, rgb_band, x, y, tile_size, threshold=10
-    ):
-        rgb_tile = rgb_band[y : y + tile_size, x : x + tile_size]
-        grayscale_tile = cv2.cvtColor(rgb_tile, cv2.COLOR_RGB2GRAY)
-        black_pixel_count = cv2.countNonZero((grayscale_tile == 0).astype(int))
-        total_pixels = grayscale_tile.shape[0] * grayscale_tile.shape[1]
-        black_pixel_percentage = (black_pixel_count / total_pixels) * 100
-        return black_pixel_percentage > threshold
-    
-    def __is_too_dark(self, tile, brightness_threshold=30):
-        grayscale_tile = cv2.cvtColor(tile, cv2.COLOR_RGB2GRAY)
-        mean_brightness = np.mean(grayscale_tile)
-        return mean_brightness < brightness_threshold
-
     def __bbox_to_spatial_extent(self, bbox) -> dict:
         west, south, east, north = bbox
         return {"west": west, "south": south, "east": east, "north": north}
@@ -278,7 +249,7 @@ class Pipeline:
         )  # , options=output_options)
         job.start_and_wait()
 
-    @retry(openeo.rest.OpenEoApiPlainError, delay=1, backoff=2, max_delay=4)
+    @retry((openeo.rest.OpenEoApiPlainError, requests.exceptions.ReadTimeout), delay=1, backoff=2, max_delay=4)
     def __save_defined(
         self,
         bbox,
@@ -292,26 +263,29 @@ class Pipeline:
             time_ranges_to_save = pd.date_range(
                 total_time_range[0],
                 total_time_range[1],
-                1,  # 24 means 23 time frames (minus ones that are too cloudy)
+                4,
             ).date
 
         files = []
         for time_start, time_end in itertools.pairwise(time_ranges_to_save):
+            filename = f"{out_folder}/{time_start}:{time_end}.nc"
+            if os.path.exists(filename):
+                print(f"Already downloaded {filename}")
+                continue
             datacube = self.__copernicus_datacube(
                 bbox, [time_start, time_end], bands,
             )
             if not os.path.exists(out_folder):
                 os.mkdir(out_folder)
-            filename = f"{out_folder}/{time_start}:{time_end}.nc"
+            datacube.download(filename)
 
-            try:
-                # self.__download_datacube_mean(datacube, filename)
-                datacube.download(filename)
-            except openeo.rest.OpenEoApiError:
-                print(
-                    f"No data available in timeframe {time_start}-{time_end} for {max_cloud_cover} % cloud coverage. Skipping..."
-                )
-                continue
+            # try:
+            #     # self.__download_datacube_mean(datacube, filename)
+            # except openeo.rest.OpenEoApiError:
+            #     print(
+            #         f"No data available in timeframe {time_start}-{time_end} for {max_cloud_cover} % cloud coverage. Skipping..."
+            #     )
+            #     continue
 
             files.append(filename)
 
@@ -334,14 +308,6 @@ class Pipeline:
         epsg_code = CRS.from_cf(ds.crs.attrs)
         return epsg_code
 
-    def __nc_to_rgbir(self, filename):
-        ds = xarray.load_dataset(filename)
-        return ds[["B04", "B03", "B02", "B08"]].to_array(dim="bands").to_numpy()
-
-    def __nc_to_single_band(self, filename):
-        ds = xarray.load_dataset(filename)
-        return ds[["B04"]].to_array(dim="bands").to_numpy().squeeze()
-
     def __nc_to_scl_band(self, filename):
         ds = xarray.load_dataset(filename)
         return ds[["SCL"]].to_array(dim="bands").to_numpy().squeeze()
@@ -363,7 +329,7 @@ if __name__ == "__main__":
             "Hamburg",
             "Warsaw",
             "Paris",
-            "London",
+            #"London",
         ],
         path="segmentation_dataset_train",
     )
