@@ -11,6 +11,18 @@ classes = {
     "buildings": {"id": 1, "dim": 255, "color": [0, 120, 230]},
 }
 
+DEVICE_CUDA = "cuda" if torch.cuda.is_available() else "cpu"
+DEVICE_CPU = "cpu"
+ENCODER = "resnet101"
+ENCODER_WEIGHTS = "imagenet"
+ACTIVATION = "sigmoid"
+PATIENCE = 5
+LR_DECAY = 0.9
+LR_ON_PLATEAU_DECAY = 0.1
+LR_MINIMAL = 1e-5
+MIN_SCORE_CHANGE = 1e-3
+APPLY_LR_DECAY_EPOCH = 30
+
 
 def to_tensor(x, **kwargs):
     return x.transpose(2, 0, 1).astype("float32")
@@ -40,12 +52,13 @@ def save_segmentation_predictions(
     if not os.path.exists(destination_folder):
         os.makedirs(destination_folder)
 
-    model = smp.DeepLabV3Plus(
-        encoder_name="resnet101",
-        encoder_weights="imagenet",
-        activation="sigmoid",
-        classes=len(classes),
+    model = smp.Unet(
+        encoder_name=ENCODER,
+        encoder_weights=ENCODER_WEIGHTS,
+        activation=ACTIVATION,
+        classes=1,
     )
+
     model.load_state_dict(torch.load(model_weights_path))
     model.eval()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
