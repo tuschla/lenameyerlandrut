@@ -158,7 +158,7 @@ def train_model(config, augmentation=None):
         for metric_name, metric_value in valid_logs.items():
             writer.add_scalar(f"Validation/{metric_name}", metric_value, epoch)
 
-        score = valid_logs["dice_loss"]
+        score = valid_logs["iou_score"]
         if score < min_score - MIN_SCORE_CHANGE:
             min_score = score
             min_score_epoch = epoch
@@ -191,8 +191,8 @@ def train_model(config, augmentation=None):
 
 def run_training_phase(config):
     scheduler = ASHAScheduler(
-        metric="dice_loss",
-        mode="min",
+        metric="iou_score",
+        mode="max",
         max_t=config["max_t"],
         grace_period=10,
         reduction_factor=2,
@@ -220,8 +220,8 @@ def run_augmentation_phase(config, best_config):
         aug_config = config.copy()
         aug_config["augmentation"] = subset
         scheduler = ASHAScheduler(
-            metric="val_loss",
-            mode="min",
+            metric="iou_score",
+            mode="max",
             max_t=config["max_t"],
             grace_period=10,
             reduction_factor=2,
