@@ -8,7 +8,7 @@ import click
 import albumentations as A
 
 classes = {
-    "buildings": {"id": 1, "dim": 0, "color": [0, 120, 230]},
+    "buildings": {"id": 1, "dim": 255, "color": [0, 120, 230]},
 }
 
 

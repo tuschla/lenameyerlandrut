@@ -9,6 +9,7 @@ import itertools
 from torch.utils.data import DataLoader
 from tensorboardX import SummaryWriter
 from dataset import BuildingSegmentation
+import ray
 from ray import train
 from ray import tune
 from ray.tune.schedulers import ASHAScheduler
@@ -134,7 +135,7 @@ def train_model(config, augmentation=None):
         loss=loss,
         metrics=metrics,
         device=device,
-        verbose=True,
+        verbose=False,
     )
 
     writer = SummaryWriter()
@@ -202,7 +203,7 @@ def run_training_phase(config):
         config=config,
         num_samples=config["num_samples"],
         scheduler=scheduler,
-        resources_per_trial={"cpu": 4, "gpu": 1},
+        resources_per_trial={"cpu": 4, "gpu": 0.5},
     )
 
     print("Initial phase best config: ", analysis.best_config)
@@ -229,9 +230,9 @@ def run_augmentation_phase(config, best_config):
         analysis = tune.run(
             train_model,
             config=aug_config,
-            num_samples=32,
+            num_samples=1,
             scheduler=scheduler,
-            resources_per_trial={"cpu": 4, "gpu": 1},
+            resources_per_trial={"cpu": 4, "gpu": 0.5},
         )
 
         print(f"Augmentation phase subset {i} best config: ", analysis.best_config)
@@ -268,14 +269,14 @@ def plot_results(
 @click.command()
 @click.option(
     "--num_samples",
-    type=click.IntRange(1, 1000),
-    default=10,
+    type=click.IntRange(1, 5),
+    default=1,
     help="Number of samples for hyperparameter search",
 )
 @click.option(
     "--max_epochs",
     type=click.IntRange(1, 10000),
-    default=10,
+    default=100,
     help="Maximum number of epochs for training",
 )
 @click.option(
@@ -298,10 +299,11 @@ def plot_results(
 )
 def main(num_samples, max_epochs, train_data_dir, val_data_dir, test_data_dir):
     train.RunConfig("./results")
+    ray.init(num_cpus=8, num_gpus=1)
 
     no_tuning_config = {
         "max_t": 20,
-        "num_samples": 4,
+        "num_samples": num_samples,
         "epochs": max_epochs,
         "use_unet": tune.grid_search([True, False]),
         "train_data_dir": Path(train_data_dir).resolve(),
@@ -321,7 +323,7 @@ def main(num_samples, max_epochs, train_data_dir, val_data_dir, test_data_dir):
 
     config = {
         "max_t": 20,
-        "num_samples": 54,
+        "num_samples": num_samples,
         "epochs": max_epochs,
         "use_unet": tune.grid_search([True, False]),
         "train_data_dir": Path(train_data_dir).resolve(),
