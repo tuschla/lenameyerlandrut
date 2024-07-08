@@ -257,7 +257,6 @@ class Pipeline:
         total_time_range=["2023-05-01", "2024-05-01"],
         time_ranges_to_save=None,
         bands=["B04", "B03", "B02", "B08", "SCL"],
-        max_cloud_cover=40,
     ) -> list[str]:
         if not time_ranges_to_save:
             time_ranges_to_save = pd.date_range(
