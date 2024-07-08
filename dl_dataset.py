@@ -49,13 +49,6 @@ class Pipeline:
         self.__make_dirs(path)
         self.custom_bbox = custom_bbox
 
-        # with multiprocessing.Pool(processes=3) as pool: # openeo max connections is 3 for some reason
-        #     results = []
-        #     for city in tqdm(self.cities, desc="Dispatching"):
-        #         results.append(pool.apply_async(self.process_city, args=(city, path)))
-        #     for result in tqdm(results, desc="Processing"):
-        #         print(result.get())
-
         for city in tqdm(cities):
             self.process_city(city, path)
 
@@ -69,7 +62,9 @@ class Pipeline:
         else:
             return None
 
-    def __save_image_tiles(self, file, image, mask, path, city, date, tile_size=128, step_size=128):
+    def __save_image_tiles(
+        self, file, image, mask, path, city, date, tile_size=128, step_size=128
+    ):
         height, width, _ = image.shape
 
         scl_band = self.__nc_to_scl_band(file)
@@ -79,24 +74,51 @@ class Pipeline:
         tasks = []
         for y in range(0, height, step_size):
             for x in range(0, width, step_size):
-                tasks.append((x, y, tile_size, scl_band, ir_band, rgb_band, image, mask, path, city, date))
+                tasks.append(
+                    (
+                        x,
+                        y,
+                        tile_size,
+                        scl_band,
+                        ir_band,
+                        rgb_band,
+                        image,
+                        mask,
+                        path,
+                        city,
+                        date,
+                    )
+                )
 
         with ThreadPoolExecutor() as executor:
-            futures = {executor.submit(self.__process_tile, *task): task for task in tasks}
-            for _ in tqdm(as_completed(futures), total=len(futures), desc="Processing tiles"):
+            futures = {
+                executor.submit(self.__process_tile, *task): task for task in tasks
+            }
+            for _ in tqdm(
+                as_completed(futures), total=len(futures), desc="Processing tiles"
+            ):
                 pass
 
-    def __process_tile(self, x, y, tile_size, scl_band, ir_band, rgb_band, image, mask, path, city, date):
+    def __process_tile(
+        self,
+        x,
+        y,
+        tile_size,
+        scl_band,
+        ir_band,
+        rgb_band,
+        image,
+        mask,
+        path,
+        city,
+        date,
+    ):
         tile = rgb_band[y : y + tile_size, x : x + tile_size]
         mask_tile = mask[y : y + tile_size, x : x + tile_size]
 
         if (
             tile.shape[0] == tile_size
             and tile.shape[1] == tile_size
-            # and not self.__is_cloudy_from_bands(scl_band, x, y, tile_size)
-            # and not self.__has_download_artefacts_from_band(tile, x, y, tile_size)
-            # and np.any(mask_tile != 0)
-            # and not self.__is_too_dark(tile)
         ):
             tile_filename = f"{path}/imgs/{city}_{date}_{x}_{y}.jpg"
             mask_tile_filename = f"{path}/masks/{city}_{date}_{x}_{y}.png"
@@ -117,7 +139,7 @@ class Pipeline:
 
     def process_city(self, city: str, path: str):
         fp = pyrosm.get_data(city)
-        if self.custom_bbox:
+        if city in self.custom_bbox.keys():
             bbox = self.custom_bbox[city]
         else:
             bbox = self.__get_city_boundaries(city)
@@ -240,16 +262,13 @@ class Pipeline:
 
         return raster
 
-    def __download_datacube_mean(self, cube, output_file):
-        mean_cube = cube.mean_time()
-        output_format = {"format": "netCDF"}
-        output_options = {"output_parameters": output_format}
-        job = mean_cube.save_result(
-            filename=output_file, format="netCDF"
-        )  # , options=output_options)
-        job.start_and_wait()
 
-    @retry((openeo.rest.OpenEoApiPlainError, requests.exceptions.ReadTimeout), delay=1, backoff=2, max_delay=4)
+    @retry(
+        (openeo.rest.OpenEoApiPlainError, requests.exceptions.ReadTimeout),
+        delay=1,
+        backoff=2,
+        max_delay=4,
+    )
     def __save_defined(
         self,
         bbox,
@@ -272,19 +291,13 @@ class Pipeline:
                 print(f"Already downloaded {filename}")
                 continue
             datacube = self.__copernicus_datacube(
-                bbox, [time_start, time_end], bands,
+                bbox,
+                [time_start, time_end],
+                bands,
             )
             if not os.path.exists(out_folder):
                 os.mkdir(out_folder)
             datacube.download(filename)
-
-            # try:
-            #     # self.__download_datacube_mean(datacube, filename)
-            # except openeo.rest.OpenEoApiError:
-            #     print(
-            #         f"No data available in timeframe {time_start}-{time_end} for {max_cloud_cover} % cloud coverage. Skipping..."
-            #     )
-            #     continue
 
             files.append(filename)
 
@@ -328,9 +341,14 @@ if __name__ == "__main__":
             "Hamburg",
             "Warsaw",
             "Paris",
-            #"London",
+            "London",
         ],
         path="segmentation_dataset_train",
+        custom_bbox={
+            "Hamburg": [9.902096, 53.515476, 10.081997, 53.605835],
+            "London": [-0.224136, 51.425376, 0.023057, 51.547662],
+            "Warsaw": [20.910186, 52.175346, 21.097983, 52.270619],
+        },
     )
 
     pipeline = Pipeline(
@@ -340,6 +358,9 @@ if __name__ == "__main__":
             "Istanbul",
         ],
         path="segmentation_dataset_val",
+        custom_bbox={
+            "Moscow": [37.502643, 55.692206, 37.737476, 55.814364],
+        },
     )
 
     pipeline = Pipeline(
