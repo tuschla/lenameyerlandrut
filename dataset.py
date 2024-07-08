@@ -24,7 +24,7 @@ class BuildingSegmentation(torch.utils.data.Dataset):
         self.mask_files = [os.path.join(masks_dir, mask_id) for mask_id in self.mask_ids]
 
         self.classes = {
-            "building": {"id": 1, "dim": 1, "color": [0, 120, 230]},
+            "building": {"id": 1, "dim": 255, "color": [0, 120, 230]},
         }
 
         self.augmentation = augmentation
