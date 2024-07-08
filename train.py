@@ -157,6 +157,7 @@ def train_model(config, augmentation=None):
             writer.add_scalar(f"Train/{metric_name}", metric_value, epoch)
         for metric_name, metric_value in valid_logs.items():
             writer.add_scalar(f"Validation/{metric_name}", metric_value, epoch)
+        train.report(valid_logs)
 
         score = valid_logs["iou_score"]
         if score < min_score - MIN_SCORE_CHANGE:
@@ -175,8 +176,6 @@ def train_model(config, augmentation=None):
                 lr *= LR_DECAY
 
         optimizer.param_groups[0]["lr"] = max(lr, LR_MINIMAL)
-
-        # train.report({"dice_loss": score})
 
     # Load best model and evaluate
     print("\nEvaluating best model...")
@@ -206,8 +205,8 @@ def run_training_phase(config):
         resources_per_trial={"cpu": 4, "gpu": 0.5},
     )
 
-    print("Initial phase best config: ", analysis.best_config)
-    return analysis.best_config, analysis.results_df
+    print("Initial phase best config: ", analysis.get_best_config("iou_score", "max"))
+    return analysis.get_best_config("iou_score", "max"), analysis.results_df
 
 
 def run_augmentation_phase(config, best_config):
@@ -235,8 +234,8 @@ def run_augmentation_phase(config, best_config):
             resources_per_trial={"cpu": 4, "gpu": 0.5},
         )
 
-        print(f"Augmentation phase subset {i} best config: ", analysis.best_config)
-        return analysis.best_config, analysis.results_df
+        print(f"Augmentation phase subset {i} best config: ", analysis.get_best_config("iou_score", "max"))
+        return analysis.get_best_config("iou_score", "max"), analysis.results_df
 
 
 def plot_results(
@@ -318,7 +317,7 @@ def main(num_samples, max_epochs, train_data_dir, val_data_dir, test_data_dir):
     plot_results(
         results_df,
         name="no_tuning",
-        title="Results without hyperparameter tuning lr: 1e-4, bs: 32, optim: AdamW.",
+        title="Results without hyperparameter tuning lr: 1e-3, bs: 32, optim: AdamW.",
     )
 
     config = {
